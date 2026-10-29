@@ -1,88 +1,110 @@
 # Azure Waste Cleaner & FinOps Optimizer
 
-A lightweight, automated FinOps CLI utility written in Python to detect orphaned and idle Azure resources, reducing cloud waste and enforcing cost governance.
+A lightweight, read-only FinOps CLI scanner written in Python that inspects Microsoft Azure subscriptions for unattached Managed Disks, reporting unused storage capacity directly in the terminal to reduce cloud waste.
 
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 ![Azure SDK](https://img.shields.io/badge/azure--sdk-python-0078D4.svg)
 ![Security](https://img.shields.io/badge/auth-DefaultAzureCredential-green.svg)
 ![RBAC Scope](https://img.shields.io/badge/rbac-Reader-success.svg)
-![License](https://img.shields.io/badge/license-MIT-informational.svg)
+![Mode](https://img.shields.io/badge/mode-read--only-informational.svg)
 
 ---
 
 ## Overview
 
-Infrastructure churn often leaves orphaned resources—such as unattached Managed Disks after VM deletion—that continue to accrue storage costs. 
+When Virtual Machines are deleted or deprovisioned in Microsoft Azure, associated Managed Disks frequently remain behind in an unattached state. Because Azure bills for provisioned disk capacity regardless of VM association, these orphaned disks generate continuous passive costs.
 
-This project provides an automated Python scanner that inspects an Azure subscription, identifies unattached disks (`managed_by is null`), and generates a clear CLI cost-audit report without embedding credentials.
+This utility automates the discovery of unattached managed disks using the official Azure SDK for Python. It strictly audits resources and summarizes provisioned storage capacity across resource groups without making state modifications or initiating deletions.
 
 ---
 
 ## Key Features
 
-- **Automated Detection:** Scans Azure subscriptions via `azure-mgmt-compute` to locate unattached managed disks.
-- **Passwordless Security:** Leverages `DefaultAzureCredential` to authenticate dynamically via an active Azure CLI session.
-- **Zero Hardcoded Secrets:** Subscription ID is consumed strictly via runtime environment variables (`AZURE_SUBSCRIPTION_ID`).
-- **Clean CLI Reporting:** Generates an aligned terminal summary detailing resource name, group, SKU, location, and provisioned size.
+- **Automated Disk Discovery:** Identifies all managed disks where the `managed_by` property is null across the target subscription scope.
+- **Passwordless Authentication:** Utilizes `DefaultAzureCredential` to authenticate dynamically via an active Azure CLI session (`az login`).
+- **No Embedded Credentials:** Reads the target subscription ID strictly from the `AZURE_SUBSCRIPTION_ID` environment variable.
+- **Read-Only Operation:** Evaluates resource states without executing modifications, deletions, or disruptive actions.
+- **Clean CLI Reporting:** Outputs findings in an aligned terminal table detailing resource names, resource groups, storage SKU types, Azure locations, and provisioned sizes in GB.
 
 ---
 
 ## Quick Start
 
 ### 1. Prerequisites
-- Python 3.10+
-- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) authenticated (`az login`)
-- Azure **Reader** role on the target subscription
+- Python 3.10 or higher.
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) installed and authenticated.
+- Azure built-in **Reader** role assigned on the target subscription or resource group.
 
-### 2. Setup
+### 2. Clone and Setup
+
 ```bash
-# Clone repository
 git clone [https://github.com/Abdulsattar-Homsi/azure-waste-cleaner.git](https://github.com/Abdulsattar-Homsi/azure-waste-cleaner.git)
 cd azure-waste-cleaner
+```
 
-# Create and activate virtual environment
-python -m venv venv
-# Linux/macOS:
+#### On Linux / macOS:
+```bash
+python3 -m venv venv
 source venv/bin/activate
-# Windows PowerShell:
-.\venv\Scripts\Activate.ps1
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Execution
-```bash
-# Set subscription ID
-# Linux/macOS:
-export AZURE_SUBSCRIPTION_ID="your-subscription-id"
-# Windows PowerShell:
-$env:AZURE_SUBSCRIPTION_ID="your-subscription-id"
+#### On Windows (PowerShell):
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
-# Run scanner
+### 3. Authentication & Execution
+
+Ensure you are logged into Azure via Azure CLI:
+```bash
+az login
+```
+
+Set your target subscription ID and run the scanner:
+
+#### On Linux / macOS:
+```bash
+export AZURE_SUBSCRIPTION_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+python main.py
+```
+
+#### On Windows (PowerShell):
+```powershell
+$env:AZURE_SUBSCRIPTION_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 python main.py
 ```
 
 ---
 
-## Verification & Lab Testing
+## Verification & Ephemeral Lab Testing
 
-The detection logic was verified against an ephemeral test disk staged via Azure CLI:
+The detection logic was verified against an intentionally staged, unattached test disk in an Azure sandbox environment:
 
 ```bash
-# 1. Create a 4GB test disk
-az disk create --name "temp-unattached-disk-test" --resource-group "NetworkWatcherRG" --size-gb 4 --sku "Standard_LRS"
+# 1. Provision a 4GB test disk
+az disk create \
+  --name "temp-unattached-disk-test" \
+  --resource-group "NetworkWatcherRG" \
+  --size-gb 4 \
+  --sku "Standard_LRS"
 
-# 2. Run scanner to confirm detection
+# 2. Execute scanner to confirm detection
 python main.py
 
-# 3. Clean up immediately (Zero lingering cost)
-az disk delete --name "temp-unattached-disk-test" --resource-group "NetworkWatcherRG" --yes
+# 3. Clean up the test resource immediately to prevent costs
+az disk delete \
+  --name "temp-unattached-disk-test" \
+  --resource-group "NetworkWatcherRG" \
+  --yes
 ```
 
-**Observed Output:**
+### Observed Terminal Output
+
 ```text
-[*] Scanning subscription: c71e597a-7158-4f70-b8ad-3cd2b1f68bf1 ...
+[*] Scanning subscription: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx ...
 
 [!] Found (1) unattached disk(s):
 
@@ -95,13 +117,29 @@ Total unattached storage capacity: 4 GB
 
 ---
 
+## Security & Permissions
+
+- **Authentication Flow:** Leverages `azure-identity`'s `DefaultAzureCredential`, which sequentially checks environment variables, Managed Identity, and local developer CLI tokens.
+- **Least Privilege:** The application functions entirely with read-only access. Assigning the built-in `Reader` role (`Microsoft.Compute/disks/read`) is sufficient.
+- **Zero Secrets at Rest:** The tool stores no API keys, client secrets, or persistent connection tokens.
+
+---
+
+## Limitations
+
+- **Storage Capacity vs. Monetary Cost:** The tool calculates and sums wasted provisioned capacity in gigabytes (GB); it does not pull dynamic pricing models or calculate currency totals.
+- **No Automated Remediation:** Disks are not deleted automatically. An unattached disk is not necessarily abandoned; it may serve as an offline backup, a volume awaiting VM maintenance, or disaster recovery data. Human verification is required prior to deletion.
+- **Scope:** Detection is currently scoped exclusively to Azure Managed Disks and does not yet inspect unassociated network or app resources.
+
+---
+
 ## Technical Decisions
 
 | Decision | Implementation | Rationale |
 | :--- | :--- | :--- |
-| **Authentication** | `DefaultAzureCredential` | Eliminates hardcoded secrets; seamlessly transitions from local CLI to Managed Identity. |
-| **Interface** | Azure Python SDK | Provides strict typing, built-in retry logic, and native pagination. |
-| **Remediation** | Report-Only | Follows safe FinOps practices; prevents accidental deletion of maintenance disks. |
+| **Authentication** | `DefaultAzureCredential` | Native Microsoft standard; allows seamless local CLI authentication without embedding Service Principal keys. |
+| **API Interface** | Azure SDK for Python (`azure-mgmt-compute`) | Provides built-in pagination, strict data typing, and reliable ARM API compatibility over raw HTTP calls. |
+| **Safety Posture** | Audit & Report Only | Avoids catastrophic data loss; leaves resource destruction decisions to cloud administrators. |
 
 ---
 
@@ -109,17 +147,17 @@ Total unattached storage capacity: 4 GB
 
 ```text
 azure-waste-cleaner/
-├── .gitignore               # Excludes venv, environment files, and pycache
-├── main.py                  # Core scanner logic and reporting engine
-├── requirements.txt         # Pinned project dependencies
-└── README.md                # Project documentation
+├── .gitignore               # Excludes virtual environment, bytecode caches, and local configurations
+├── main.py                  # Scanner implementation, Azure SDK client calls, and CLI table output
+├── requirements.txt         # Pinned Python package dependencies
+└── README.md                # Technical project documentation and usage guide
 ```
 
 ---
 
 ## Roadmap
 
-- [ ] **Unassociated Public IPs:** Identify idle reserved Public IPs generating billing waste.
+- [ ] **Unassociated Public IPs:** Identify idle reserved Public IPs incurring hourly reservation fees.
 - [ ] **Empty App Service Plans:** Audit App Service Plans running zero web applications.
-- [ ] **ChatOps Integration:** Automated scheduled summaries sent via Webhook to Microsoft Teams / Slack.
-- [ ] **Serverless Execution:** Containerize as a periodic Azure Timer-Triggered Function.
+- [ ] **Automated Alerts:** Deliver scheduled audit reports via Webhook to Microsoft Teams or Slack.
+- [ ] **Serverless Execution:** Package scanner as an Azure Timer-Triggered Function.
